@@ -1,0 +1,180 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model ParkingLot {
+  id               String            @id @default(cuid())
+  name             String            @unique
+  vanguardId       String?           @unique
+  capacity         Int
+  currentOccupancy Int               @default(0)
+  address          String?
+  createdAt        DateTime          @default(now())
+  updatedAt        DateTime          @updatedAt
+
+  // Relations
+  sessions         ParkingSession[]
+  permits          Permit[]
+  violations       Violation[]
+  pricingRules     PricingRule[]
+  notifications    Notification[]
+}
+
+model ParkingSession {
+  id            String    @id @default(cuid())
+  licensePlate  String
+  lotId         String
+  entryTime     DateTime  @default(now())
+  exitTime      DateTime?
+  status        String    // "active", "completed", "violation"
+  paymentStatus String    @default("unpaid") // "paid", "unpaid", "pending"
+  amount        Decimal?  @db.Decimal(10, 2)
+  paymentRef    String?
+  vanguardEventId String? @unique
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  // Relations
+  lot           ParkingLot @relation(fields: [lotId], references: [id])
+  
+  @@index([licensePlate, status])
+  @@index([lotId, entryTime])
+}
+
+model Permit {
+  id            String    @id @default(cuid())
+  type          String    // "monthly", "employee", "vip"
+  licensePlate  String    
+  firstName     String
+  lastName      String
+  email         String
+  mobile        String
+  company       String?
+  department    String?
+  expiryDate    DateTime? // Only for monthly permits
+  status        String    @default("active") // "active", "inactive", "suspended"
+  globalAccess  Boolean   @default(false) // Works across all lots
+  createdBy     String
+  lotId         String?   // Null if global access
+  notes         String?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  // Relations
+  lot           ParkingLot? @relation(fields: [lotId], references: [id])
+  
+  @@unique([licensePlate, type])
+  @@index([licensePlate, status])
+  @@index([type, status])
+}
+
+model Violation {
+  id            String    @id @default(cuid())
+  licensePlate  String
+  lotId         String
+  violationTime DateTime  @default(now())
+  reason        String
+  amount        Decimal   @db.Decimal(10, 2)
+  status        String    @default("issued") // "issued", "paid", "dismissed", "appealed", "overdue"
+  paidAt        DateTime?
+  paymentRef    String?
+  officerId     String?
+  notes         String?
+  imageUrl      String?
+  vanguardEventId String? 
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  // Relations
+  lot           ParkingLot @relation(fields: [lotId], references: [id])
+  
+  @@index([licensePlate, status])
+  @@index([lotId, violationTime])
+}
+
+model PricingRule {
+  id            String    @id @default(cuid())
+  lotId         String
+  name          String
+  dayOfWeek     Int[]     // 0-6 (Sunday-Saturday)
+  startTime     String    // "HH:mm"
+  endTime       String    // "HH:mm"
+  rate          Decimal   @db.Decimal(10, 2)
+  type          String    // "fixed", "progressive", "time_window"
+  surgeActive   Boolean   @default(false)
+  surgeRate     Decimal?  @db.Decimal(10, 2)
+  surgeThreshold Int?     // Occupancy percentage to trigger surge
+  maxRate       Decimal?  @db.Decimal(10, 2)
+  priority      Int       @default(0) // Higher priority rules override lower
+  active        Boolean   @default(true)
+  eventName     String?   // For special event pricing
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  // Relations
+  lot           ParkingLot @relation(fields: [lotId], references: [id])
+  
+  @@index([lotId, active, priority])
+}
+
+model Transaction {
+  id            String    @id @default(cuid())
+  type          String    // "parking", "permit", "violation"
+  amount        Decimal   @db.Decimal(10, 2)
+  licensePlate  String?
+  lotId         String?
+  paymentMethod String?   // "credit_card", "cash", "app", "permit"
+  referenceId   String?   // Reference to ParkingSession, Permit, or Violation
+  status        String    @default("completed") // "pending", "completed", "failed", "refunded"
+  processedBy   String?
+  notes         String?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+  
+  @@index([type, createdAt])
+  @@index([licensePlate, createdAt])
+}
+
+model Notification {
+  id            String    @id @default(cuid())
+  type          String    // "revenue", "violation", "occupancy", "maintenance", "system"
+  title         String
+  message       String
+  urgency       String    @default("low") // "critical", "high", "medium", "low"
+  lotId         String?
+  status        String    @default("pending") // "pending", "accepted", "closed", "notified"
+  metadata      Json?     // Additional data as JSON
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  // Relations
+  lot           ParkingLot? @relation(fields: [lotId], references: [id])
+  
+  @@index([type, status])
+  @@index([createdAt])
+}
+
+model VanguardEvent {
+  id            String    @id @default(cuid())
+  eventType     String    // "entry", "exit", "alert"
+  licensePlate  String
+  lotId         String
+  vanguardLotId String
+  timestamp     DateTime
+  confidence    Float?
+  imageUrl      String?
+  processed     Boolean   @default(false)
+  rawData       Json      // Store complete webhook payload
+  createdAt     DateTime  @default(now())
+  
+  @@index([licensePlate, timestamp])
+  @@index([processed, createdAt])
+}
